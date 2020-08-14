@@ -65,7 +65,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: src
-        run: JOBS=$(nproc) yarn install
+        run: JOBS=$(nproc) yarn install --frozen-lockfile
 
       - name: Build
         working-directory: src
