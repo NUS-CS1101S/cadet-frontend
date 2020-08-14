@@ -78,10 +78,10 @@ jobs:
       - name: Create Sentry release
         working-directory: src/build
         run: |
-          SENTRY_RELEASE=$(cat version.txt)
+          SENTRY_RELEASE="cadet-frontend@$(cat version.txt)"
           "$GITHUB_WORKSPACE/sentry-cli" releases new -p "$SENTRY_PROJECT" "$SENTRY_RELEASE"
           "$GITHUB_WORKSPACE/sentry-cli" releases set-commits --auto "$SENTRY_RELEASE"
-          "$GITHUB_WORKSPACE/sentry-cli" releases files "$SENTRY_RELEASE" upload-sourcemaps static
+          "$GITHUB_WORKSPACE/sentry-cli" releases files "$SENTRY_RELEASE" upload-sourcemaps --url-prefix '~/static/js' --rewrite static/js
           "$GITHUB_WORKSPACE/sentry-cli" releases finalize "$SENTRY_RELEASE"
           "$GITHUB_WORKSPACE/sentry-cli" releases deploys "$SENTRY_RELEASE" new -e "cs1101s-$INPUT_ENV"
         env:
