@@ -10,7 +10,7 @@ source should be pushed to any other branch.
 To deploy:
 
 1. Push the commit(s) you want to deploy to the `deploy` branch (or any other
-   branch).
+   branch) _on this repository_.
 1. Go to the ["Deploy cadet-frontend" workflow on this
    repository](https://github.com/NUS-CS1101S/cadet-frontend/actions?query=workflow%3A%22Deploy+cadet-frontend%22).
 1. Click on "Run workflow" and fill in the environment (`stg` or `prod`) and ref
