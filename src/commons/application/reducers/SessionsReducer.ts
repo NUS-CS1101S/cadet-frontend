@@ -24,7 +24,6 @@ import {
   UPDATE_ASSESSMENT_OVERVIEWS,
   UPDATE_GRADING,
   UPDATE_GRADING_OVERVIEWS,
-  UPDATE_INFINITE_LOOP_ENCOUNTERED,
   UPDATE_NOTIFICATIONS,
   UPDATE_TOTAL_XP
 } from '../types/SessionTypes';
@@ -111,11 +110,6 @@ export const SessionsReducer: Reducer<SessionState> = (
       return {
         ...state,
         gradingOverviews: action.payload
-      };
-    case UPDATE_INFINITE_LOOP_ENCOUNTERED:
-      return {
-        ...state,
-        hadPreviousInfiniteLoop: true
       };
     case UPDATE_NOTIFICATIONS:
       return {
