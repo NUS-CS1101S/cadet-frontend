@@ -9,14 +9,14 @@ import {
   fetchNotifications,
   updateLatestViewedCourse
 } from '../../commons/application/actions/SessionActions';
-import AssessmentContainer from '../../commons/assessment/AssessmentContainer';
+import Assessment from '../../commons/assessment/Assessment';
 import { assessmentTypeLink } from '../../commons/utils/ParamParseHelper';
 import { assessmentRegExp, gradingRegExp } from '../../features/academy/AcademyTypes';
-import Achievement from '../../pages/achievement/AchievementContainer';
+import Achievement from '../../pages/achievement/Achievement';
 import Sourcecast from '../../pages/sourcecast/SourcecastContainer';
 import NotFound from '../notFound/NotFound';
-import AdminPanel from './adminPanel/AdminPanelContainer';
-import DashboardContainer from './dashboard/DashboardContainer';
+import AdminPanel from './adminPanel/AdminPanel';
+import Dashboard from './dashboard/Dashboard';
 import Game from './game/Game';
 import Grading from './grading/GradingContainer';
 import GroundControl from './groundControl/GroundControlContainer';
@@ -43,7 +43,7 @@ const Academy: React.FC<{}> = () => {
           <Route path={`${path}/grading/${gradingRegExp}`} component={Grading} key={1} />,
           <Route path={`${path}/sourcereel`} component={Sourcereel} key={2} />,
           <Route path={`${path}/storysimulator`} component={StorySimulator} key={3} />,
-          <Route path={`${path}/dashboard`} component={DashboardContainer} key={4} />
+          <Route path={`${path}/dashboard`} component={Dashboard} key={4} />
         ]
       : null;
   return (
@@ -54,7 +54,7 @@ const Academy: React.FC<{}> = () => {
             path={`${path}/${assessmentTypeLink(assessmentConfiguration.type)}/${assessmentRegExp}`}
             key={assessmentConfiguration.type}
           >
-            <AssessmentContainer assessmentConfiguration={assessmentConfiguration} />
+            <Assessment assessmentConfiguration={assessmentConfiguration} />
           </Route>
         ))}
         {enableGame && <Route path={`${path}/game`} component={Game} />}
