@@ -175,20 +175,6 @@ exports[`MissionControl, GroundControl, Sourcereel, StorySimulator, Dashboard an
         Story Simulator
       </div>
     </NavLink>
-    <NavLink
-      className={[Function]}
-      title="Notifications"
-      to="/courses/0/notipreference"
-    >
-      <Blueprint4.Icon
-        icon="notifications"
-      />
-      <div
-        className="navbar-button-text hidden-xs hidden-sm hidden-md hidden-lg"
-      >
-        Notifications
-      </div>
-    </NavLink>
   </Blueprint4.NavbarGroup>
 </Blueprint4.Navbar>
 `;
@@ -293,22 +279,7 @@ exports[`MissionControl, GroundControl, Sourcereel, StorySimulator, Dashboard, G
   </Blueprint4.NavbarGroup>
   <Blueprint4.NavbarGroup
     align="right"
-  >
-    <NavLink
-      className={[Function]}
-      title="Notifications"
-      to="/courses/0/notipreference"
-    >
-      <Blueprint4.Icon
-        icon="notifications"
-      />
-      <div
-        className="navbar-button-text hidden-xs hidden-sm hidden-md hidden-lg"
-      >
-        Notifications
-      </div>
-    </NavLink>
-  </Blueprint4.NavbarGroup>
+  />
 </Blueprint4.Navbar>
 `;
 
@@ -499,20 +470,6 @@ exports[`MissionControl, GroundControl, Sourcereel, StorySimulator, Dashboard, G
         className="navbar-button-text hidden-xs hidden-sm hidden-md hidden-lg"
       >
         Admin Panel
-      </div>
-    </NavLink>
-    <NavLink
-      className={[Function]}
-      title="Notifications"
-      to="/courses/0/notipreference"
-    >
-      <Blueprint4.Icon
-        icon="notifications"
-      />
-      <div
-        className="navbar-button-text hidden-xs hidden-sm hidden-md hidden-lg"
-      >
-        Notifications
       </div>
     </NavLink>
   </Blueprint4.NavbarGroup>
