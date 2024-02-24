@@ -23,14 +23,20 @@ jobs:
         env:
           INPUT_ENV: ${{ github.event.inputs.env }}
 
+      - name: Install dependencies (apt)
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y --no-install-recommends \
+          libxi-dev libgl1-mesa-dev
+
       - name: Checkout frontend
-        uses: actions/checkout@master
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref }}
           path: src
 
       - name: Checkout deployment configuration
-        uses: actions/checkout@master
+        uses: actions/checkout@v4
         with:
           repository: "NUS-CS1101S/deployment"
           ref: master
@@ -43,23 +49,12 @@ jobs:
           curl -sL https://sentry.io/get-cli/ | INSTALL_DIR=. bash
 
       - name: Setup Node.js
-        uses: actions/setup-node@v2-beta
+        uses: actions/setup-node@v4
         with:
-          node-version: "14"
+          node-version: 20
+          cache: yarn
 
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "::set-output name=dir::$(yarn cache dir)"
-
-      - uses: actions/cache@v2
-        id: yarn-cache
-        with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: ${{ runner.os }}-${{ github.event.inputs.env }}-yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ github.event.inputs.env }}-yarn-
-
-      - uses: actions/cache@v2
+      - uses: actions/cache@v4
         id: build-cache
         with:
           path: src/node_modules/.cache
