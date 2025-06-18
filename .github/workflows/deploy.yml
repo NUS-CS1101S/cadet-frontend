@@ -8,27 +8,17 @@ on:
       env:
         description: "Environment to deploy to"
         required: true
+        type: choice
+        options:
+          - prod
+          - stg
+        default: stg
 
 jobs:
   deploy:
     name: Deploy cadet-frontend
     runs-on: ubuntu-latest
     steps:
-      - name: Verify env
-        run: |
-          case "$INPUT_ENV" in
-            prod | stg) exit 0;;
-            *) echo "Invalid env: $INPUT_ENV"; exit 1;;
-          esac
-        env:
-          INPUT_ENV: ${{ github.event.inputs.env }}
-
-      - name: Install dependencies (apt)
-        run: |
-          sudo apt-get update && \
-          sudo apt-get install -y --no-install-recommends \
-          libxi-dev libgl1-mesa-dev
-
       - name: Checkout frontend
         uses: actions/checkout@v4
         with:
@@ -47,6 +37,11 @@ jobs:
       - name: Setup Sentry CLI
         run: |
           curl -sL https://sentry.io/get-cli/ | INSTALL_DIR=. bash
+
+      # Has to be run before actions/setup-node.
+      # See: https://github.com/actions/setup-node/issues/480
+      - name: Enable corepack for Yarn
+        run: corepack enable
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
