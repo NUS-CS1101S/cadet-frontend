@@ -66,20 +66,20 @@ jobs:
         working-directory: src
         run: $GITHUB_WORKSPACE/deployment/cadet-frontend/build-frontend.sh ${{ github.event.inputs.env }}
 
-      - name: Create Sentry release
-        working-directory: src/build
-        run: |
-          SENTRY_RELEASE="cadet-frontend@$(cat version.txt)"
-          "$GITHUB_WORKSPACE/sentry-cli" releases new -p "$SENTRY_PROJECT" "$SENTRY_RELEASE"
-          "$GITHUB_WORKSPACE/sentry-cli" releases set-commits --auto "$SENTRY_RELEASE"
-          "$GITHUB_WORKSPACE/sentry-cli" releases files "$SENTRY_RELEASE" upload-sourcemaps --url-prefix '~/static/js' --rewrite static/js
-          "$GITHUB_WORKSPACE/sentry-cli" releases finalize "$SENTRY_RELEASE"
-          "$GITHUB_WORKSPACE/sentry-cli" releases deploys "$SENTRY_RELEASE" new -e "cs1101s-$INPUT_ENV"
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: sourceacademy
-          SENTRY_PROJECT: cadet-frontend
-          INPUT_ENV: ${{ github.event.inputs.env }}
+      # - name: Create Sentry release
+      #   working-directory: src/build
+      #   run: |
+      #     SENTRY_RELEASE="cadet-frontend@$(cat version.txt)"
+      #     "$GITHUB_WORKSPACE/sentry-cli" releases new -p "$SENTRY_PROJECT" "$SENTRY_RELEASE"
+      #     "$GITHUB_WORKSPACE/sentry-cli" releases set-commits --auto "$SENTRY_RELEASE"
+      #     "$GITHUB_WORKSPACE/sentry-cli" releases files "$SENTRY_RELEASE" upload-sourcemaps --url-prefix '~/static/js' --rewrite static/js
+      #     "$GITHUB_WORKSPACE/sentry-cli" releases finalize "$SENTRY_RELEASE"
+      #     "$GITHUB_WORKSPACE/sentry-cli" releases deploys "$SENTRY_RELEASE" new -e "cs1101s-$INPUT_ENV"
+      #   env:
+      #     SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      #     SENTRY_ORG: sourceacademy
+      #     SENTRY_PROJECT: cadet-frontend
+      #     INPUT_ENV: ${{ github.event.inputs.env }}
 
       - name: Remove source maps
         working-directory: src/build
