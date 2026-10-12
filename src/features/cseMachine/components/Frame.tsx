@@ -14,6 +14,7 @@ import {
   fadedStrokeColor,
   getTextWidth,
   getUnreferencedObjects,
+  hoverBackgroundColor,
   isClosure,
   isDataArray,
   isDummyKey,
@@ -42,20 +43,14 @@ const frameNames = new Map([
   ['functionBodyEnvironment', 'Function Body'],
 ]);
 
-// Python's LEGB terminology (#4042). Layout.snapshotMode is true only while rendering a
-// Conductor snapshot (currently Python-only) — the legacy non-conductor path (conductor.enable
-// off) always runs js-slang's own real-time interpreter and must keep js-slang's own
-// "Global"/"Program" names unchanged.
-const pythonFrameNames = new Map([
-  ['global', 'Built-in functions'],
-  ['programEnvironment', 'Globals'],
-]);
-
-function getFrameLabel(envName: string): string {
-  const label = Layout.snapshotMode
-    ? (pythonFrameNames.get(envName) ?? frameNames.get(envName))
-    : frameNames.get(envName);
-  return label ?? envName;
+/**
+ * A frame's heading: the one its evaluator chose (e.g. Python's "Global" and "Built-ins" for the
+ * frames JavaScript calls "Program" and "Global", #4042), which `CseSnapshotAdapter.ts` stashes on
+ * the fake Environment as `label`; otherwise derived from the environment's name.
+ */
+function getFrameLabel(environment: Env): string {
+  const label = (environment as unknown as { label?: string }).label;
+  return label ?? frameNames.get(environment.name) ?? environment.name;
 }
 
 // Height of one header row (frame name, or the globals annotation stacked below it).
@@ -142,7 +137,13 @@ export class Frame extends Visible implements IHoverable {
     // move the global frame default text to the first position if it isn't in there already
     if (this.environment.name === 'global' && entries[0][0] !== Config.GlobalFrameDefaultText) {
       const index = entries.findIndex(([key]) => key === Config.GlobalFrameDefaultText);
-      entries.unshift(entries.splice(index, 1)[0]);
+      // Guard the -1: a global frame can legitimately not carry the sentinel at all (js-slang
+      // keeps its builtins in the global frame's own head rather than hiding them), and
+      // `splice(-1, 1)` reads that as "the last entry", silently promoting an unrelated
+      // binding to the front.
+      if (index >= 0) {
+        entries.unshift(entries.splice(index, 1)[0]);
+      }
     }
 
     // get values that are unreferenced, which will used to created dummy bindings
@@ -286,7 +287,7 @@ export class Frame extends Visible implements IHoverable {
       ? lastVisibleBinding.y() - this.y() + lastVisibleBinding.height() + Config.FramePaddingY
       : Config.FramePaddingY * 2;
 
-    this._name = new Text(getFrameLabel(this.environment.name), this.x(), this.level.y(), {
+    this._name = new Text(getFrameLabel(this.environment), this.x(), this.level.y(), {
       maxWidth: this.width(),
       faded: !this.isLive,
     });
@@ -341,7 +342,7 @@ export class Frame extends Visible implements IHoverable {
       textOffset += Math.floor(this.width() / 2) - Math.floor(this.name.width() / 2);
     }
     this._name = new Text(
-      getFrameLabel(this.environment.name),
+      getFrameLabel(this.environment),
       this.x() + textOffset,
       this.level!.y(), // this method is only called after the frame is drawn
       { maxWidth: this.width(), faded: !this.isLive },
@@ -364,9 +365,47 @@ export class Frame extends Visible implements IHoverable {
     this._width = newWidth;
   }
 
-  onMouseEnter = () => {};
+  /**
+   * This frame's colour, when it is drawn for a view that gives it one (`Layout.frameColors`,
+   * captured when drawn, since the drawing outlives that setting), and whether it is the current
+   * frame. A coloured frame is hoverable, and its box takes its colour; if current, it keeps its
+   * colour with a wider outline instead of the active colour. Frames without a colour (e.g. the
+   * builtins frame) are drawn as in the CSE Machine tab.
+   */
+  private color: string | undefined;
+  private isCurrent: boolean = false;
 
-  onMouseLeave = () => {};
+  private get colored(): boolean {
+    return this.color !== undefined;
+  }
+
+  private boxStroke(): string {
+    if (this.color !== undefined && this.isLive) {
+      return this.color;
+    }
+    return this.isCurrent && !this.colored
+      ? defaultActiveColor()
+      : this.isLive
+        ? defaultStrokeColor()
+        : fadedStrokeColor();
+  }
+
+  onMouseEnter = () => {
+    if (this.colored) {
+      Layout.notifyFrameHover(this.environment.id, true);
+    }
+  };
+
+  onMouseLeave = () => {
+    if (this.colored) {
+      Layout.notifyFrameHover(this.environment.id, false);
+    }
+  };
+
+  /** Gives the frame's box the hovered background, or its normal one. */
+  setHoverBackground(hovered: boolean): void {
+    this.rectRef.current?.fill(hovered ? hoverBackgroundColor() : defaultBackgroundColor());
+  }
 
   setArrowSourceHighlightedStyle(): void {
     if (this.isLive) {
@@ -378,13 +417,7 @@ export class Frame extends Visible implements IHoverable {
   }
 
   setArrowSourceNormalStyle(): void {
-    this.rectRef.current?.stroke(
-      CseMachine.getCurrentEnvId() === this.environment?.id
-        ? defaultActiveColor()
-        : this.isLive
-          ? defaultStrokeColor()
-          : fadedStrokeColor(),
-    );
+    this.rectRef.current?.stroke(this.boxStroke());
     this.name.setArrowSourceNormalStyle();
   }
 
@@ -392,9 +425,16 @@ export class Frame extends Visible implements IHoverable {
     if (CseAnimation.shouldHideFrame(this.environment.id)) {
       return null;
     }
+    this.color = Layout.frameColors?.get(this.environment.id);
+    this.isCurrent = CseMachine.getCurrentEnvId() === this.environment?.id;
 
     return (
-      <Group ref={this.ref} key={Layout.key++}>
+      <Group
+        ref={this.ref}
+        key={Layout.key++}
+        onMouseEnter={this.onMouseEnter}
+        onMouseLeave={this.onMouseLeave}
+      >
         {/*
           The header rows (name, globals annotation) float above the frame's box, in the same
           gap that the parent/tail arrow passes through. Arrows are already drawn on a Konva
@@ -444,17 +484,11 @@ export class Frame extends Visible implements IHoverable {
           y={this.y()}
           width={this.width()}
           height={this.height()}
-          stroke={
-            CseMachine.getCurrentEnvId() === this.environment?.id
-              ? defaultActiveColor()
-              : this.isLive
-                ? defaultStrokeColor()
-                : fadedStrokeColor()
-          }
+          stroke={this.boxStroke()}
+          strokeWidth={this.colored && this.isCurrent ? Config.CurrentFrameStrokeWidth : 1}
           cornerRadius={Config.FrameCornerRadius}
-          onMouseEnter={this.onMouseEnter}
-          onMouseLeave={this.onMouseLeave}
-          listening={false}
+          // Hoverable only where frames are linked to a plugin (see `onMouseEnter`).
+          listening={this.colored}
           key={Layout.key++}
           fill={defaultBackgroundColor()}
         />
