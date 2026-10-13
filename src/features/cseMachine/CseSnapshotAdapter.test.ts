@@ -1,8 +1,9 @@
 import type { Control, Stash } from 'js-slang/dist/cse-machine/interpreter';
 import Konva from 'konva';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { CseSnapshot } from '../conductor/CseMachineHostPlugin';
+import { ArrayNullUnit } from './components/ArrayNullUnit';
 import { Frame } from './components/Frame';
 import { FnValue } from './components/values/FnValue';
 import CseMachine from './CseMachine';
@@ -10,7 +11,7 @@ import { CseAnimation } from './CseMachineAnimation';
 import { Config } from './CseMachineConfig';
 import { Layout } from './CseMachineLayout';
 import type { EnvTree } from './CseMachineTypes';
-import { isBuiltInFn } from './CseMachineUtils';
+import { getBodyText, getParamsText, isBuiltInFn } from './CseMachineUtils';
 import { buildFakeEnvTreeFromSnapshot } from './CseSnapshotAdapter';
 
 // Real (headless) Konva stage/layer so animation components — which need a live layer
@@ -134,17 +135,371 @@ describe('buildFakeEnvTreeFromSnapshot', () => {
   });
 });
 
-describe('Python LEGB frame labels (#4042) only apply in snapshot mode', () => {
-  it('renames "global"/"programEnvironment" for a Python snapshot', () => {
-    const snapshot: CseSnapshot = {
+describe('heap objects in Python snapshots', () => {
+  const list = (id: number, elements: unknown[], extra: object = {}) => ({
+    displayValue: '[...]',
+    label: 'list',
+    metadata: { id, envId: 'g', elements, ...extra },
+  });
+  const lambda = (objectId?: string) => ({
+    displayValue: 'lambda',
+    label: 'function',
+    metadata: { closureFrameId: 'g', params: ['x'], funcName: 'lambda' },
+    ...(objectId ? { objectId } : {}),
+  });
+  const headOf = (bindings: { name: string; value: unknown }[]) => {
+    const snapshot = {
+      stepIndex: 0,
+      control: [],
+      stash: [],
+      environments: [{ id: 'g', name: 'global', parentId: null, bindings, isActive: true }],
+    } as unknown as CseSnapshot;
+    return (findNode(buildFakeEnvTreeFromSnapshot(snapshot).envTree, 'g')!.environment as any).head;
+  };
+
+  it('resolves a back reference to the list itself, for a list that contains itself', () => {
+    const head = headOf([
+      { name: 'xs', value: { ...list(7, [list(7, [], { backReference: true })]), objectId: '#1' } },
+    ]);
+    expect(head.xs[0]).toBe(head.xs);
+    expect(head.xs.objectId).toBe('#1');
+  });
+
+  it("keeps a frame's bindings in the order the evaluator listed them, functions included", () => {
+    const head = headOf([
+      { name: 'f', value: lambda('#1') },
+      { name: 'q', value: list(2, []) },
+      { name: 'n', value: { displayValue: '3', label: 'int', metadata: {} } },
+      { name: 'g', value: lambda('#3') },
+    ]);
+    expect(Object.keys(head)).toEqual(['f', 'q', 'n', 'g']);
+  });
+
+  it('identifies closures by their objectId, lambdas included', () => {
+    const head = headOf([
+      { name: 'f', value: lambda('#1') },
+      { name: 'g', value: lambda('#1') },
+      { name: 'h', value: lambda('#2') },
+      { name: 'k', value: lambda() },
+    ]);
+    expect(head.f).toBe(head.g);
+    expect(head.f.objectId).toBe('#1');
+    expect(head.h).not.toBe(head.f);
+    expect(head.k.objectId).toBeUndefined();
+  });
+
+  it("describes a function by its parameters and its body's source", () => {
+    const fn = (name: string, body?: string) => ({
+      displayValue: name,
+      label: 'function',
+      metadata: { closureFrameId: 'g', params: ['y', 'z'], funcName: name, body },
+    });
+    const head = headOf([
+      { name: 'f', value: fn('f', 'return x') },
+      { name: 'g', value: fn('g', 'if y:\n    return 1\nreturn z') },
+      { name: 'h', value: fn('h') },
+    ]);
+    expect(getParamsText(head.f)).toBe('(y, z)');
+    expect(getBodyText(head.f)).toBe('return x');
+    expect(getBodyText(head.g)).toBe('\n  if y:\n      return 1\n  return z');
+    // Without the source, the placeholder as before.
+    expect(getBodyText(head.h)).toContain('[Python]');
+
+    // A function redefined under the same name (g = f; def f...) keeps its own body.
+    const redefined = headOf([
+      { name: 'g', value: fn('f', 'return 1') },
+      { name: 'f', value: fn('f', 'return 2') },
+    ]);
+    expect(getBodyText(redefined.g)).toBe('return 1');
+    expect(getBodyText(redefined.f)).toBe('return 2');
+  });
+
+  it("gives a hovered object's circles or boxes a black background, light grey in printable mode", () => {
+    const snapshot = {
       stepIndex: 0,
       control: [],
       stash: [],
       environments: [
-        { id: 'g', name: 'global', parentId: null, bindings: [], isActive: false },
+        {
+          id: 'g',
+          name: 'global',
+          parentId: null,
+          bindings: [
+            { name: 'f', value: lambda('#1') },
+            {
+              name: 'xs',
+              value: { ...list(31, [{ displayValue: '1', label: 'int' }]), objectId: '#2' },
+            },
+          ],
+          isActive: true,
+        },
+      ],
+    } as unknown as CseSnapshot;
+    CseMachine.drawEnvironments(snapshot, { width: 500, height: 500, clearDeadFrames: false });
+    const fn = [...Layout.values.values()].find(v => v instanceof FnValue) as FnValue;
+    const outer = { attrs: { stroke: '#999' }, fill: vi.fn() };
+    const dot = { attrs: { fill: '#999' }, fill: vi.fn() };
+    (fn.ref as any).current = { getChildren: () => [outer, dot] };
+    fn.setHoverBackground(true);
+    expect(outer.fill).toHaveBeenLastCalledWith(Config.HoverFrameBgColor);
+    expect(dot.fill).not.toHaveBeenCalled();
+    const array = [...Layout.values.values()].find(v => (v as any).data?.id === 'list_31') as any;
+    const box = { fill: vi.fn() };
+    array.units[0].ref.current = box;
+    CseMachine.togglePrintableMode();
+    try {
+      array.setHoverBackground(true);
+      expect(box.fill).toHaveBeenLastCalledWith(Config.PrintHoverFrameBgColor);
+    } finally {
+      CseMachine.togglePrintableMode();
+    }
+    array.setHoverBackground(false);
+    expect(box.fill).toHaveBeenLastCalledWith(Config.BgColor);
+  });
+
+  it('gives a hovered empty list its background too', () => {
+    const snapshot = {
+      stepIndex: 0,
+      control: [],
+      stash: [],
+      environments: [
+        {
+          id: 'g',
+          name: 'global',
+          parentId: null,
+          bindings: [{ name: 'xs', value: { ...list(32, []), objectId: '#1' } }],
+          isActive: true,
+        },
+      ],
+    } as unknown as CseSnapshot;
+    const drawing = CseMachine.drawEnvironments(snapshot, {
+      width: 500,
+      height: 500,
+      clearDeadFrames: false,
+    });
+    expect(drawing).not.toBeNull();
+    const array = [...Layout.values.values()].find(v => (v as any).data?.id === 'list_32') as any;
+    expect(array.units).toHaveLength(0);
+    const box = { fill: vi.fn() };
+    array.emptyUnit.ref.current = box;
+    Layout.highlightObject('#1');
+    expect(box.fill).toHaveBeenLastCalledWith(Config.HoverFrameBgColor);
+  });
+
+  it('highlights the drawn object with an objectId, and reports hovering it', () => {
+    const snapshot = {
+      stepIndex: 0,
+      control: [],
+      stash: [],
+      environments: [
+        {
+          id: 'g',
+          name: 'global',
+          parentId: null,
+          bindings: [
+            { name: 'f', value: lambda('#1') },
+            { name: 'h', value: lambda('#2') },
+          ],
+          isActive: true,
+        },
+      ],
+    } as unknown as CseSnapshot;
+    CseMachine.drawEnvironments(snapshot, { width: 500, height: 500, clearDeadFrames: false });
+    const fns = [...Layout.values.values()].filter(v => v instanceof FnValue) as FnValue[];
+    const byId = (id: string) => fns.find(f => (f.data as any).objectId === id)!;
+    const hovered = vi.spyOn(byId('#1'), 'setHoverBackground');
+    const other = vi.spyOn(byId('#2'), 'setHoverBackground');
+    const green = vi.spyOn(byId('#1'), 'setArrowSourceHighlightedStyle');
+    Layout.highlightObject('#1');
+    expect(hovered).toHaveBeenCalledWith(true);
+    expect(other).toHaveBeenCalledWith(false);
+    // Not the green highlight: frames are colour-coded.
+    expect(green).not.toHaveBeenCalled();
+
+    const onHover = vi.fn();
+    Layout.onObjectHover = onHover;
+    try {
+      Layout.notifyObjectHover(byId('#2').data, true);
+      Layout.notifyObjectHover(byId('#2').data, false);
+      Layout.notifyObjectHover({}, true);
+    } finally {
+      Layout.onObjectHover = undefined;
+    }
+    expect(onHover.mock.calls).toEqual([['#2'], [null]]);
+  });
+});
+
+describe("Python's None in a box-and-pointer diagram", () => {
+  it('is a slash in a list box, and "None" in a frame', () => {
+    const none = { displayValue: 'None', label: 'NoneType' };
+    const snapshot = {
+      stepIndex: 0,
+      control: [],
+      stash: [],
+      environments: [
         {
           id: 'p',
           name: 'programEnvironment',
+          parentId: null,
+          bindings: [
+            {
+              name: 'xs',
+              value: {
+                displayValue: '[3, None]',
+                label: 'list',
+                metadata: {
+                  id: 21,
+                  envId: 'p',
+                  elements: [{ displayValue: '3', label: 'int' }, none],
+                },
+              },
+            },
+            { name: 'y', value: none },
+          ],
+          isActive: true,
+        },
+      ],
+    } as unknown as CseSnapshot;
+    CseMachine.drawEnvironments(snapshot, { width: 500, height: 500, clearDeadFrames: false });
+    const list = [...Layout.values.values()].find(v => (v as any).data?.id === 'list_21') as any;
+    const [first, second] = list.units.map((unit: any) => unit.value.text);
+    expect(second).toBeInstanceOf(ArrayNullUnit);
+    expect(first).not.toBeInstanceOf(ArrayNullUnit);
+    const frame = Layout.levels.flatMap(level => level.frames)[0];
+    const y = frame.bindings.find(b => b.keyString.startsWith('y'))!;
+    expect((y.value as any).text).not.toBeInstanceOf(ArrayNullUnit);
+    expect((y.value as any).text.partialStr).toBe('None');
+  });
+});
+
+describe('unassigned bindings', () => {
+  const snapshot = (isConst?: boolean) =>
+    ({
+      stepIndex: 0,
+      control: [],
+      stash: [],
+      environments: [
+        {
+          id: 'p',
+          name: 'programEnvironment',
+          parentId: null,
+          bindings: [{ name: 'n', value: { displayValue: '', label: 'unassigned' }, isConst }],
+          isActive: true,
+        },
+      ],
+    }) as unknown as CseSnapshot;
+  const keyOf = (s: CseSnapshot) => {
+    CseMachine.drawEnvironments(s, { width: 500, height: 500, clearDeadFrames: false });
+    const frame = Layout.levels.flatMap(level => level.frames)[0];
+    return frame.bindings.find(b => b.keyString.startsWith('n'))!.keyString;
+  };
+
+  it("are variables, with a colon, unless the snapshot says they are constants (Python's locals)", () => {
+    expect(keyOf(snapshot())).toBe('n' + Config.VariableColon);
+  });
+
+  it('are constants, with :=, when the snapshot says so', () => {
+    expect(keyOf(snapshot(true))).toBe('n' + Config.ConstantColon);
+  });
+});
+
+describe('values only the stash holds', () => {
+  const pyList = (id: number, envId: string, elements: unknown[]) => ({
+    displayValue: '[...]',
+    label: 'list',
+    metadata: { id, envId, elements },
+  });
+  const snapshotWithStash = (stash: unknown[]) =>
+    ({
+      stepIndex: 0,
+      control: [],
+      stash,
+      environments: [
+        {
+          id: 'p',
+          name: 'programEnvironment',
+          parentId: null,
+          bindings: [{ name: 'x', value: { displayValue: '1', label: 'int' } }],
+          isActive: true,
+        },
+      ],
+    }) as unknown as CseSnapshot;
+  const drawnArrays = () =>
+    [...Layout.values.values()].filter(v => v.constructor.name === 'ArrayValue');
+
+  it('draws a list that only the stash holds, beside its frame (e.g. an argument not yet bound)', () => {
+    CseMachine.drawEnvironments(
+      snapshotWithStash([
+        pyList(7, 'p', [
+          { displayValue: '1', label: 'int' },
+          pyList(8, 'p', [
+            { displayValue: '2', label: 'int' },
+            { displayValue: 'None', label: 'NoneType' },
+          ]),
+        ]),
+      ]),
+      { width: 500, height: 500, clearDeadFrames: false },
+    );
+    const ids = drawnArrays().map(v => (v as any).data.id);
+    expect(ids).toEqual(expect.arrayContaining(['list_7', 'list_8']));
+  });
+
+  it("puts a nested list into its own frame's heap, which may be another frame", () => {
+    const snapshot = {
+      stepIndex: 0,
+      control: [],
+      stash: [pyList(11, 'p', [pyList(12, 'f', [])])],
+      environments: [
+        { id: 'p', name: 'programEnvironment', parentId: null, bindings: [], isActive: true },
+        { id: 'f', name: 'f', parentId: 'p', bindings: [], isActive: false },
+      ],
+    } as unknown as CseSnapshot;
+    const { envTree } = buildFakeEnvTreeFromSnapshot(snapshot);
+    const heapIds = (id: string) =>
+      [...(findNode(envTree, id)!.environment as any).heap.getHeap()].map((v: any) => v.id);
+    expect(heapIds('p')).toContain('list_11');
+    expect(heapIds('f')).toContain('list_12');
+  });
+
+  it('is not thrown by a list that contains itself', () => {
+    const self = pyList(13, 'p', []);
+    (self.metadata.elements as unknown[]).push({
+      ...pyList(13, 'p', []),
+      metadata: { id: 13, envId: 'p', elements: [], backReference: true },
+    });
+    expect(() => buildFakeEnvTreeFromSnapshot(snapshotWithStash([self]))).not.toThrow();
+  });
+
+  it('does not draw it without a frame to put it in', () => {
+    CseMachine.drawEnvironments(snapshotWithStash([pyList(9, 'nowhere', [])]), {
+      width: 500,
+      height: 500,
+      clearDeadFrames: false,
+    });
+    expect(drawnArrays().map(v => (v as any).data.id)).not.toContain('list_9');
+  });
+});
+
+describe('frame headings (#4042)', () => {
+  /** A snapshot of the two top frames, with the given labels (none: as js-slang sends them). */
+  const snapshotWith = (labels: { global?: string; program?: string }): CseSnapshot =>
+    ({
+      stepIndex: 0,
+      control: [],
+      stash: [],
+      environments: [
+        {
+          id: 'g',
+          name: 'global',
+          label: labels.global,
+          parentId: null,
+          bindings: [],
+          isActive: false,
+        },
+        {
+          id: 'p',
+          name: 'programEnvironment',
+          label: labels.program,
           parentId: 'g',
           // A frame with a genuinely empty head gets collapsed by Layout's "skip empty
           // environments" behavior; give it one trivial binding to keep it visible.
@@ -152,10 +507,9 @@ describe('Python LEGB frame labels (#4042) only apply in snapshot mode', () => {
           isActive: true,
         },
       ],
-    };
-
+    }) as unknown as CseSnapshot;
+  const headings = (snapshot: CseSnapshot) => {
     const { envTree, fakeControl, fakeStash } = buildFakeEnvTreeFromSnapshot(snapshot);
-
     Layout.snapshotMode = true;
     try {
       Layout.setContext(
@@ -166,13 +520,31 @@ describe('Python LEGB frame labels (#4042) only apply in snapshot mode', () => {
     } finally {
       Layout.snapshotMode = false;
     }
+    return ['g', 'p'].map(
+      id => Frame.getFrom(findNode(envTree, id)!.environment as any)!.name.partialStr,
+    );
+  };
 
-    expect(Frame.getFrom(findNode(envTree, 'g')!.environment as any)!.name.partialStr).toBe(
-      'Built-in functions',
-    );
-    expect(Frame.getFrom(findNode(envTree, 'p')!.environment as any)!.name.partialStr).toBe(
-      'Globals',
-    );
+  it("are the evaluator's labels when it sends them (Python)", () => {
+    expect(headings(snapshotWith({ global: 'Built-ins', program: 'Global' }))).toEqual([
+      'Built-ins',
+      'Global',
+    ]);
+  });
+
+  it('are derived from the frame names otherwise (JavaScript)', () => {
+    expect(headings(snapshotWith({}))).toEqual(['Global', 'Program']);
+  });
+
+  it("stay the evaluator's labels in a plugin's diagram, which places frames afresh", () => {
+    CseMachine.drawEnvironments(snapshotWith({ global: 'Built-ins', program: 'Global' }), {
+      width: 500,
+      height: 500,
+      clearDeadFrames: false,
+    });
+    const names = Layout.levels.flatMap(level => level.frames).map(f => f.name.partialStr);
+    expect(names).toEqual(expect.arrayContaining(['Built-ins', 'Global']));
+    expect(names).not.toContain('Program');
   });
 });
 

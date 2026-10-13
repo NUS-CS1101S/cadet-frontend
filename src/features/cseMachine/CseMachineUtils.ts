@@ -97,6 +97,20 @@ export function isEmptyEnvironment(env: Env): env is Env & { head: EmptyObject }
   return env === null || isEmptyObject(env.head);
 }
 
+/**
+ * Returns `true` if a frame may be left out of the diagram as boring: it has no bindings, no live
+ * closure or array draws its arrow to it as its defining environment (#4380), and nothing is
+ * homed in it at all — not even a dead function or array, which the diagram draws greyed out
+ * beside its frame, so the frame stays too.
+ */
+export function isPrunableEnvironment(env: Env): boolean {
+  return (
+    isEmptyEnvironment(env) &&
+    !Layout.closureHomeEnvIDs.has(env.id) &&
+    !(env?.heap?.getHeap().size > 0)
+  );
+}
+
 /** Returns `true` if `data` is an array */
 export function isArray(data: any): data is any[] {
   return Array.isArray(data);
@@ -166,6 +180,17 @@ export function isNonGlobalFn(data: Data): data is NonGlobalFn {
 /** Returns `true` if `data` is null */
 export function isNull(data: Data): data is null {
   return data === null;
+}
+
+/**
+ * Whether `data` is a snapshot's `None` (see CseSnapshotAdapter.ts): an object, so that a frame
+ * binding shows it as "None", not JS `null`'s "null"; but in a box of a box-and-pointer diagram,
+ * it is the empty list's terminator, drawn as a slash like `null`.
+ */
+export function isSnapshotNone(data: unknown): boolean {
+  return (
+    typeof data === 'object' && data !== null && (data as { isNone?: unknown }).isNone === true
+  );
 }
 
 /** Returns `true` if `data` is undefined */
@@ -626,6 +651,13 @@ export function getParamsText(data: Closure | GlobalFn | StreamFn): string {
 
 /** Returns the body string of the given function */
 export function getBodyText(data: Closure | GlobalFn | StreamFn): string {
+  // A function from a snapshot whose evaluator sent the body's source (e.g. Python's, which has
+  // no braces): one line as it is, several lines indented below the label.
+  const bodySource = (data as { bodySource?: unknown }).bodySource;
+  if (isClosure(data) && typeof bodySource === 'string') {
+    const lines = bodySource.split('\n');
+    return lines.length === 1 ? bodySource : '\n' + lines.map(line => '  ' + line).join('\n');
+  }
   const fnString = data.toString();
   if (isClosure(data)) {
     let body =
@@ -817,8 +849,7 @@ export function getNextChildren(c: EnvTreeNode): EnvTreeNode[] {
   // A bindingless frame is normally boring and safe to collapse, but not when it's still the
   // defining environment some live closure/array elsewhere draws its arrow to (#4380) — there
   // would be nothing left for that arrow to point at.
-  const isCollapsible =
-    isEmptyEnvironment(c.environment) && !Layout.closureHomeEnvIDs.has(c.environment.id);
+  const isCollapsible = isPrunableEnvironment(c.environment);
   if (isCollapsible) {
     const nextChildren: EnvTreeNode[] = [];
     c.children.forEach(gc => {
@@ -1255,6 +1286,14 @@ export const isStashItemInDanger = (stashIndex: number): boolean => {
 
 const isHulkModeEnabled = () =>
   typeof document !== 'undefined' && document.querySelector('.Playground.GreenScreen') !== null;
+
+/**
+ * The background of a frame or object hovered in a plugin's linked diagram (see
+ * `Layout.highlightFrame` / `Layout.highlightObject`): darker in the dark theme, a light grey in
+ * printable mode. A background, not a colour of its own, since frames carry colours of their own.
+ */
+export const hoverBackgroundColor = () =>
+  CseMachine.getPrintableMode() ? Config.PrintHoverFrameBgColor : Config.HoverFrameBgColor;
 
 export const defaultBackgroundColor = () =>
   isHulkModeEnabled()
